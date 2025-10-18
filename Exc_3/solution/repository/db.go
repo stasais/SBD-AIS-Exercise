@@ -60,7 +60,7 @@ func getDsn() (string, error) {
 	if !ok {
 		return "", errors.New("environment variable 'DB_HOST' is not set")
 	}
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s",
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 		dbHost, dbUser, dbPw, dbName, dbPort)
 	return dsn, nil
 }
@@ -79,11 +79,58 @@ func prepopulate(dbConn *gorm.DB) error {
 		// don't prepopulate if has already run
 		return nil
 	}
-	// create drink menu
-	// todo create drinks
-	// todo create orders
-	// GORM documentation can be found here: https://gorm.io/docs/index.html
 
+	// create drink menu
+	drinks := []model.Drink{
+		{
+			Name:        "Beer",
+			Price:       2.00,
+			Description: "Refreshing alcoholic beverage",
+		},
+		{
+			Name:        "Spritzer",
+			Price:       1.40,
+			Description: "Wine mixed with sparkling water",
+		},
+		{
+			Name:        "Coffee",
+			Price:       1.00,
+			Description: "Hot caffeinated beverage",
+		},
+	}
+
+	// Insert drinks into database
+	for _, drink := range drinks {
+		err = dbConn.Create(&drink).Error
+		if err != nil {
+			return fmt.Errorf("failed to create drink %s: %w", drink.Name, err)
+		}
+		slog.Info("Created drink", "name", drink.Name, "price", drink.Price)
+	}
+
+	// Optionally create some sample orders
+	// Get the created drinks first
+	var createdDrinks []model.Drink
+	err = dbConn.Find(&createdDrinks).Error
+	if err != nil {
+		return fmt.Errorf("failed to retrieve created drinks: %w", err)
+	}
+
+	// Create some sample orders
+	sampleOrders := []model.Order{
+		{DrinkID: createdDrinks[0].ID, Amount: 2}, // 2 Beers
+		{DrinkID: createdDrinks[1].ID, Amount: 1}, // 1 Spritzer
+		{DrinkID: createdDrinks[2].ID, Amount: 3}, // 3 Coffees
+	}
+
+	for _, order := range sampleOrders {
+		err = dbConn.Create(&order).Error
+		if err != nil {
+			return fmt.Errorf("failed to create sample order: %w", err)
+		}
+	}
+
+	slog.Info("Database prepopulation completed successfully")
 	return nil
 }
 
