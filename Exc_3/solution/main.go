@@ -51,8 +51,10 @@ func main() {
 	// OpenAPI Routes
 	r.Get("/openapi/*", httpSwagger.WrapHandler)
 
-	slog.Info("⚡⚡⚡ Order System is up and running ⚡⚡⚡")
-	err = http.ListenAndServe(":3000", r)
+	// Start server
+	addr := ":3000"
+	slog.Info("⚡⚡⚡ Order System is up and running ⚡⚡⚡", "addr", addr, "localURL", "http://localhost"+addr, "swagger", "http://localhost"+addr+"/openapi/index.html")
+	err = http.ListenAndServe(addr, r)
 	if err != nil {
 		log.Fatal(err)
 	}
