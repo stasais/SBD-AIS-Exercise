@@ -1,0 +1,38 @@
+
+networks:
+  orders-net:
+
+volumes:
+  pg18data:
+
+services:
+  pg:
+    image: postgres:18
+    container_name: pg
+    ports:
+      - "5432:5432"
+    env_file:
+      - ./debug.env
+    environment:
+      - PGDATA=/var/lib/postgresql/18/docker
+    volumes:
+      - pg18data:/var/lib/postgresql/18/docker
+    networks:
+      - orders-net
+    restart: always
+
+  ordersystem:
+    build: .
+    image: ordersystem
+    container_name: ordersystem
+    depends_on:
+      - pg
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./debug.env
+    networks:
+      - orders-net
+    command: ["./ordersystem"]
+    restart: always
+
