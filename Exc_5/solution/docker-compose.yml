@@ -1,0 +1,109 @@
+networks:
+  web:
+    name: web
+  intercom:
+    name: intercom
+
+volumes:
+  order_pg_vol:
+
+services:
+  traefik:
+    # Official Traefik v3.5.2 image - modern reverse proxy and load balancer
+    image: "traefik:v3.5.2"
+    command:
+      # Enable Traefik dashboard without authentication (for development only)
+      - "--api.insecure=true"
+      # Enable Docker provider to auto-discover containers
+      - "--providers.docker=true"
+      # Disable automatic exposure of all containers (services must opt-in with labels)
+      - "--providers.docker.exposedbydefault=false"
+      # Define HTTP entry point on port 80
+      - "--entrypoints.web.address=:80"
+      # Enable access logs to debug routing issues
+      - "--accesslog=true"
+      # Set log level to debug
+      - "--log.level=DEBUG"
+    ports:
+      # Expose port 80 for HTTP traffic (main entry point)
+      - "80:80"
+      # Expose port 8080 for Traefik dashboard access
+      - "8080:8080"
+    volumes:
+      # Mount Docker socket (read-only) so Traefik can query container information
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    networks:
+      # Connect only to web network for routing external traffic
+      - web
+
+
+  orderservice:
+    container_name: orderservice
+    build: .
+    command: [ "/app/ordersystem" ]
+    # Automatically restart if the container exits (e.g., database not ready yet)
+    restart: on-failure
+    # Wait for database container to start before starting this service
+    depends_on:
+      - order-postgres
+    labels:
+      # Enable Traefik routing for this container
+      - "traefik.enable=true"
+      # Use BOTH Host-based AND Path-based routing for flexibility
+      # Host-based routing (original)
+      - "traefik.http.routers.orderservice.rule=Host(`orders.localhost`)"
+      - "traefik.http.routers.orderservice.entrypoints=web"
+      - "traefik.http.routers.orderservice.priority=100"
+      # Path-based routing (fallback for WSL issues) 
+      - "traefik.http.routers.orderservice-api.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.orderservice-api.entrypoints=web"
+      - "traefik.http.routers.orderservice-api.priority=200"
+      # Specify the port where the service is listening (orderservice uses port 3000)
+      - "traefik.http.services.orderservice.loadbalancer.server.port=3000"
+    environment:
+      - POSTGRES_DB=order
+      - POSTGRES_USER=docker
+      - POSTGRES_PASSWORD=docker
+      - POSTGRES_TCP_PORT=5432
+      - DB_HOST=order-postgres
+    networks:
+      - intercom
+      - web
+
+  sws:
+    # Static Web Server - lightweight server for serving static frontend files
+    image: joseluisq/static-web-server:latest
+    volumes:
+      # Mount the local frontend folder to serve static files
+      - ./frontend:/public
+    environment:
+      # Set the port SWS will listen on inside the container
+      - SERVER_PORT=80
+      # Set the root directory where static files are located
+      - SERVER_ROOT=/public
+    labels:
+      # Enable Traefik routing for this container
+      - "traefik.enable=true"
+      # Route requests to localhost (without subdomain) to this service
+      - "traefik.http.routers.sws.rule=Host(`localhost`)"
+      # Use the web entry point (port 80)
+      - "traefik.http.routers.sws.entrypoints=web"
+      # Specify the port where SWS is listening (port 80)
+      - "traefik.http.services.sws.loadbalancer.server.port=80"
+    networks:
+      - web
+
+  order-postgres:
+    image: postgres:latest
+    restart: always
+    networks:
+      - intercom
+    volumes:
+      - order_pg_vol:/var/lib/postgresql/18/docker
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=order
+      - POSTGRES_USER=docker
+      - POSTGRES_PASSWORD=docker
+      - POSTGRES_TCP_PORT=5432

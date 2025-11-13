@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-box {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        .info { color: blue; }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Traefik + OrderService Connection Test</h1>
+    
+    <div class="test-box">
+        <h2>Test 1: Frontend Server (SWS)</h2>
+        <p>If you can see this page, the frontend server is working! ✅</p>
+        <p class="success">Status: Connected to http://localhost</p>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 2: API Server via Traefik</h2>
+        <button onclick="testAPI()">Test API Connection</button>
+        <div id="api-result"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 3: DNS Resolution</h2>
+        <p>Current page URL: <span class="info" id="current-url"></span></p>
+        <p>API endpoint: <span class="info">http://orders.localhost/api/menu</span></p>
+        <button onclick="testDNS()">Test DNS Resolution</button>
+        <div id="dns-result"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 4: CORS Configuration</h2>
+        <button onclick="testCORS()">Test CORS Headers</button>
+        <div id="cors-result"></div>
+    </div>
+
+    <script>
+        // Display current URL
+        document.getElementById('current-url').textContent = window.location.href;
+
+        async function testAPI() {
+            const resultDiv = document.getElementById('api-result');
+            resultDiv.innerHTML = '<p>Testing...</p>';
+            
+            try {
+                const response = await fetch('http://orders.localhost/api/menu');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.innerHTML = `
+                        <p class="success">✅ API Connection Successful!</p>
+                        <p>Status: ${response.status} ${response.statusText}</p>
+                        <p>Drinks found: ${data.length}</p>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <p class="error">❌ API returned error</p>
+                        <p>Status: ${response.status} ${response.statusText}</p>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Connection Failed</p>
+                    <p>Error: ${error.message}</p>
+                    <p><strong>Possible causes:</strong></p>
+                    <ul>
+                        <li>orders.localhost not in Windows hosts file</li>
+                        <li>Docker containers not running</li>
+                        <li>Traefik not configured correctly</li>
+                        <li>Network/firewall blocking connection</li>
+                    </ul>
+                `;
+            }
+        }
+
+        async function testDNS() {
+            const resultDiv = document.getElementById('dns-result');
+            resultDiv.innerHTML = '<p>Testing DNS resolution...</p>';
+            
+            try {
+                // Try to resolve by making a simple request
+                const response = await fetch('http://orders.localhost/api/menu', {
+                    method: 'HEAD'
+                });
+                
+                resultDiv.innerHTML = `
+                    <p class="success">✅ DNS Resolution Working!</p>
+                    <p>orders.localhost is resolving correctly</p>
+                `;
+            } catch (error) {
+                if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    resultDiv.innerHTML = `
+                        <p class="error">❌ DNS Resolution Failed</p>
+                        <p>Error: ${error.message}</p>
+                        <p><strong>Fix:</strong> Add to Windows hosts file:</p>
+                        <pre>C:\\Windows\\System32\\drivers\\etc\\hosts
+
+Add line:
+127.0.0.1 orders.localhost</pre>
+                        <p>Then flush DNS: <code>ipconfig /flushdns</code></p>
+                    `;
+                }
+            }
+        }
+
+        async function testCORS() {
+            const resultDiv = document.getElementById('cors-result');
+            resultDiv.innerHTML = '<p>Testing CORS configuration...</p>';
+            
+            try {
+                const response = await fetch('http://orders.localhost/api/menu', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const corsHeaders = {
+                    'Access-Control-Allow-Origin': response.headers.get('Access-Control-Allow-Origin'),
+                    'Access-Control-Allow-Methods': response.headers.get('Access-Control-Allow-Methods'),
+                    'Access-Control-Allow-Headers': response.headers.get('Access-Control-Allow-Headers')
+                };
+                
+                resultDiv.innerHTML = `
+                    <p class="success">✅ CORS Headers Present</p>
+                    <pre>${JSON.stringify(corsHeaders, null, 2)}</pre>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ CORS Test Failed</p>
+                    <p>Error: ${error.message}</p>
+                `;
+            }
+        }
+
+        // Auto-run API test on page load
+        window.addEventListener('load', () => {
+            setTimeout(testAPI, 1000);
+        });
+    </script>
+</body>
+</html>
