@@ -54,8 +54,8 @@
     const drinkMap = new Map(); // drink_id => drink object
 
     // Fetch and display the drink menu
-    // Use relative URL so it works through Traefik path-based routing
-    fetch("/api/menu")
+    // Use full URL to reach the orderservice through Traefik
+    fetch("http://orders.localhost/api/menu")
         .then(res => res.json())
         .then(drinks => {
             menuList.innerHTML = "";
@@ -76,7 +76,7 @@
         });
 
     function loadOrderTotalled() {
-        fetch("/api/order/totalled")
+        fetch("http://orders.localhost/api/order/totalled")
             .then(res => res.json())
             .then(orders => {
                 const labels = [];
@@ -128,7 +128,7 @@
     }
 
     function loadOrders() {
-        fetch("/api/order/all")
+        fetch("http://orders.localhost/api/order/all")
             .then(res => res.json())
             .then(orders => {
                 if (orders.length === 0) {

@@ -1248,9 +1248,42 @@ docker-compose up
 - Order History and Total Orders sections are also empty
 
 **Root Cause:**
-You're running Docker in WSL but accessing the website from a Windows browser. The JavaScript code in the frontend tries to fetch from `http://orders.localhost`, but Windows doesn't know how to resolve `orders.localhost`.
+This is **not a bug**, but a fundamental architectural challenge with host-based routing. The frontend JavaScript runs in your browser and needs to make API requests to `http://orders.localhost`. When accessing from a Windows browser while Docker runs in WSL, Windows doesn't automatically resolve `*.localhost` subdomains.
 
-**Solution (REQUIRED for WSL users):**
+**Current Implementation (Host-Based Routing):**
+```yaml
+# docker-compose.yml configuration
+orderservice:
+  labels:
+    - "traefik.http.routers.orderservice.rule=Host(`orders.localhost`)"
+
+sws:
+  labels:
+    - "traefik.http.routers.sws.rule=Host(`localhost`)"
+```
+
+```javascript
+// frontend/index.html - API calls use full URL
+fetch("http://orders.localhost/api/menu")
+fetch("http://orders.localhost/api/order/totalled")
+fetch("http://orders.localhost/api/order/all")
+```
+
+**Why This Happens (Not WSL-Specific):**
+1. Browser loads HTML from `http://localhost` (the `sws` service)
+2. JavaScript executes and makes API calls to `http://orders.localhost`
+3. This is a **cross-origin request** (different subdomains)
+4. Requires DNS resolution for `orders.localhost`
+
+**This affects ALL operating systems**, not just WSL:
+- **Windows**: Doesn't auto-resolve `*.localhost` subdomains
+- **macOS**: Some versions don't auto-resolve
+- **Linux**: Depends on systemd-resolved configuration
+- **WSL**: Additional complexity due to Windows-WSL networking
+
+**Solution 1: Configure DNS Resolution (REQUIRED for current setup)**
+
+**For WSL users accessing from Windows browser:**
 
 1. **On Windows (your host OS):**
    - Open Notepad as Administrator
@@ -1277,20 +1310,27 @@ You're running Docker in WSL but accessing the website from a Windows browser. T
    - Check browser console (F12) - no more errors
    - Menu should now load
 
-**Why both places?**
-- WSL `/etc/hosts`: For WSL commands (curl, wget, etc.)
-- Windows `hosts` file: For Windows applications (your browser)
-
-**Verification:**
+**For Linux/macOS users:**
 ```bash
-# In WSL - test API
-curl http://orders.localhost/api/menu
-
-# Should return JSON with drinks
+# Add to /etc/hosts
+echo "127.0.0.1 orders.localhost" | sudo tee -a /etc/hosts
 ```
 
-**Alternative Solution (if modifying hosts file is not possible):**
-Change the frontend code to use relative paths or localhost:3000, but this breaks the microservices architecture pattern.
+**Pros of Host-Based Routing:**
+- ✅ Clear separation between services (different domains)
+- ✅ Production-like setup (mirrors real-world architecture)
+- ✅ Easy to add more services with different subdomains
+- ✅ Works with CORS once properly configured
+
+**Cons of Host-Based Routing:**
+- ❌ Requires DNS configuration (hosts file modification)
+- ❌ Need to configure CORS headers in API
+- ❌ More complex for development environments
+- ❌ DNS configuration can break after system updates
+
+**Solution 2: Path-Based Routing (Alternative Architecture)**
+
+A more elegant solution that eliminates DNS issues entirely. See **Part 5** below for complete implementation guide.
 
 ## Useful Commands
 
@@ -1435,3 +1475,503 @@ You now have a complete microservices setup with:
 - ✅ **Production-Ready Pattern** - Easy to migrate to real domains
 
 The architecture is scalable, secure, resilient, and follows modern microservices best practices!
+
+---
+
+# Part 5: Alternative Routing Architecture - Path-Based Routing
+
+## Overview
+
+This section describes an alternative to the host-based routing currently implemented. Path-based routing eliminates DNS configuration issues and simplifies frontend-backend communication.
+
+## Current Architecture vs Alternative
+
+### Current Implementation (Host-Based Routing)
+```
+Frontend:  http://localhost       → SWS
+API:       http://orders.localhost → OrderService
+```
+
+**Requires:**
+- DNS configuration (hosts file)
+- CORS configuration
+- Full URLs in frontend code
+
+### Alternative Implementation (Path-Based Routing)
+```
+Frontend:  http://localhost/      → SWS
+API:       http://localhost/api/* → OrderService
+```
+
+**Requires:**
+- No DNS configuration
+- No CORS configuration (same origin)
+- Relative URLs in frontend code
+
+## How Path-Based Routing Works
+
+### Concept
+Instead of routing based on domain/subdomain (Host header), Traefik routes based on URL path:
+
+```
+Request Path                 → Routed To
+─────────────────────────────────────────────
+http://localhost/            → SWS (frontend)
+http://localhost/index.html  → SWS (frontend)
+http://localhost/api/menu    → OrderService
+http://localhost/api/orders  → OrderService
+http://localhost/openapi/*   → OrderService
+```
+
+### How Traefik Decides
+
+Traefik evaluates rules with **priority**:
+1. Higher priority rules are checked first
+2. First matching rule wins
+3. Request is routed to the corresponding service
+
+```
+Priority 2: PathPrefix(`/api`) → OrderService
+Priority 1: Host(`localhost`)  → SWS (catch-all)
+```
+
+## Implementation Guide
+
+### Step 1: Update docker-compose.yml
+
+Replace the Traefik labels in your `docker-compose.yml`:
+
+```yaml
+services:
+  traefik:
+    # ... existing traefik configuration unchanged ...
+
+  orderservice:
+    container_name: orderservice
+    build: .
+    command: [ "/app/ordersystem" ]
+    restart: on-failure
+    depends_on:
+      - order-postgres
+    labels:
+      # Enable Traefik routing for this container
+      - "traefik.enable=true"
+      
+      # Route based on path prefix, not hostname
+      - "traefik.http.routers.orderservice.rule=Host(`localhost`) && PathPrefix(`/api`)"
+      
+      # Use web entry point (port 80)
+      - "traefik.http.routers.orderservice.entrypoints=web"
+      
+      # Higher priority to match before catch-all SWS rule
+      - "traefik.http.routers.orderservice.priority=2"
+      
+      # Specify the port where the service is listening
+      - "traefik.http.services.orderservice.loadbalancer.server.port=3000"
+      
+      # Use the web network for routing
+      - "traefik.docker.network=web"
+    environment:
+      - POSTGRES_DB=order
+      - POSTGRES_USER=docker
+      - POSTGRES_PASSWORD=docker
+      - POSTGRES_TCP_PORT=5432
+      - DB_HOST=order-postgres
+    networks:
+      - intercom
+      - web
+
+  sws:
+    image: joseluisq/static-web-server:latest
+    volumes:
+      - ./frontend:/public
+    environment:
+      - SERVER_PORT=80
+      - SERVER_ROOT=/public
+    labels:
+      # Enable Traefik routing for this container
+      - "traefik.enable=true"
+      
+      # Catch-all rule for localhost (no path restriction)
+      - "traefik.http.routers.sws.rule=Host(`localhost`)"
+      
+      # Use web entry point (port 80)
+      - "traefik.http.routers.sws.entrypoints=web"
+      
+      # Lower priority - catches everything not matched by orderservice
+      - "traefik.http.routers.sws.priority=1"
+      
+      # Specify the port where SWS is listening
+      - "traefik.http.services.sws.loadbalancer.server.port=80"
+    networks:
+      - web
+
+  order-postgres:
+    # ... unchanged ...
+```
+
+### Step 2: Update frontend/index.html
+
+Change the API URLs from absolute to relative:
+
+**Before (Host-Based Routing):**
+```javascript
+fetch("http://orders.localhost/api/menu")
+fetch("http://orders.localhost/api/order/totalled")
+fetch("http://orders.localhost/api/order/all")
+```
+
+**After (Path-Based Routing):**
+```javascript
+fetch("/api/menu")
+fetch("/api/order/totalled")
+fetch("/api/order/all")
+```
+
+**Complete example:**
+```javascript
+// Fetch and display the drink menu
+// Using relative URL - works through Traefik path-based routing
+fetch("/api/menu")
+    .then(res => res.json())
+    .then(drinks => {
+        menuList.innerHTML = "";
+        drinks.forEach(drink => {
+            drinkMap.set(drink.id, drink);
+            const li = document.createElement("li");
+            li.textContent = `${drink.name} - $${drink.price.toFixed(2)} (${drink.description})`;
+            menuList.appendChild(li);
+        });
+
+        // After loading drinks, load orders
+        loadOrderTotalled();
+        loadOrders();
+    })
+    .catch(err => {
+        console.error("Failed to load menu:", err);
+        menuList.innerHTML = "<li>Error loading menu.</li>";
+    });
+
+function loadOrderTotalled() {
+    fetch("/api/order/totalled")
+        .then(res => res.json())
+        .then(orders => {
+            // ... existing code ...
+        })
+        .catch(err => {
+            console.error("Failed to load orders:", err);
+            totalledChartDiv.textContent = "Error loading orders.";
+        });
+}
+
+function loadOrders() {
+    fetch("/api/order/all")
+        .then(res => res.json())
+        .then(orders => {
+            // ... existing code ...
+        })
+        .catch(err => {
+            console.error("Failed to load orders:", err);
+            ordersChartDiv.textContent = "Error loading orders.";
+        });
+}
+```
+
+### Step 3: Deploy and Test
+
+```bash
+# Stop existing containers
+docker-compose down
+
+# Start with new configuration
+docker-compose up -d
+
+# Wait for services to start
+sleep 5
+
+# Test the setup
+curl http://localhost/           # Should return HTML (frontend)
+curl http://localhost/api/menu   # Should return JSON (API)
+```
+
+## Understanding Priority in Traefik
+
+### Why Priority Matters
+
+Without priority, Traefik might match the wrong rule:
+
+```
+Request: http://localhost/api/menu
+
+Without priority:
+  ❌ Matches Host(`localhost`) first → Routes to SWS → 404 error
+
+With priority:
+  ✅ Checks priority=2 first: Host(`localhost`) && PathPrefix(`/api`) → Matches!
+  ✅ Routes to OrderService → Success
+```
+
+### How Priority Works
+
+```yaml
+# Priority 2 - Checked first
+orderservice:
+  - "traefik.http.routers.orderservice.rule=Host(`localhost`) && PathPrefix(`/api`)"
+  - "traefik.http.routers.orderservice.priority=2"
+
+# Priority 1 - Checked second (default is 0)
+sws:
+  - "traefik.http.routers.sws.rule=Host(`localhost`)"
+  - "traefik.http.routers.sws.priority=1"
+```
+
+**Rule evaluation order:**
+1. Check orderservice rule (priority 2)
+   - If path starts with `/api` → Route to orderservice
+2. Check sws rule (priority 1)
+   - Matches any localhost request → Route to sws
+
+### PathPrefix Explanation
+
+`PathPrefix(`/api`)` matches:
+- ✅ `/api`
+- ✅ `/api/`
+- ✅ `/api/menu`
+- ✅ `/api/orders/123`
+- ✅ `/api/anything/deeply/nested`
+
+Does NOT match:
+- ❌ `/`
+- ❌ `/index.html`
+- ❌ `/styles.css`
+- ❌ `/apidocs` (doesn't start with `/api/` exactly)
+
+## Advanced PathPrefix Patterns
+
+You can route multiple path prefixes to the same service:
+
+```yaml
+# Route both /api and /openapi to orderservice
+- "traefik.http.routers.orderservice.rule=Host(`localhost`) && (PathPrefix(`/api`) || PathPrefix(`/openapi`))"
+```
+
+Or create separate routers:
+
+```yaml
+# API router
+- "traefik.http.routers.orderservice-api.rule=Host(`localhost`) && PathPrefix(`/api`)"
+- "traefik.http.routers.orderservice-api.priority=2"
+- "traefik.http.routers.orderservice-api.service=orderservice"
+
+# OpenAPI/Swagger router
+- "traefik.http.routers.orderservice-docs.rule=Host(`localhost`) && PathPrefix(`/openapi`)"
+- "traefik.http.routers.orderservice-docs.priority=2"
+- "traefik.http.routers.orderservice-docs.service=orderservice"
+
+# Service definition (shared by both routers)
+- "traefik.http.services.orderservice.loadbalancer.server.port=3000"
+```
+
+## Request Flow Diagram
+
+### Path-Based Routing Flow
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Browser                              │
+│                                                         │
+│  User visits: http://localhost/                        │
+│  JavaScript loads and makes:                           │
+│    fetch('/api/menu')                                  │
+│    fetch('/api/order/totalled')                        │
+└─────────────────┬───────────────────────────────────────┘
+                  │
+                  ↓ All requests to localhost:80
+         ┌────────────────────┐
+         │   Traefik          │
+         │   Entry Point:web  │
+         └────────┬───────────┘
+                  │
+                  ├─ Request: / (GET index.html)
+                  │    ↓ Check rules by priority
+                  │    ↓ Priority 2: /api? No
+                  │    ↓ Priority 1: localhost? Yes
+                  │    ↓
+                  │  ┌──────────────┐
+                  │  │     SWS      │
+                  │  │  Port: 80    │
+                  │  │ /public/     │
+                  │  └──────┬───────┘
+                  │         │
+                  │         └─→ Returns index.html
+                  │
+                  └─ Request: /api/menu
+                       ↓ Check rules by priority
+                       ↓ Priority 2: localhost && /api? Yes
+                       ↓
+                     ┌──────────────────┐
+                     │  OrderService    │
+                     │   Port: 3000     │
+                     │   REST API       │
+                     └────────┬─────────┘
+                              │
+                              ├─→ Queries PostgreSQL
+                              │   (via intercom network)
+                              │
+                              └─→ Returns JSON
+```
+
+## Comparison: Host-Based vs Path-Based
+
+| Aspect | Host-Based (Current) | Path-Based (Alternative) |
+|--------|---------------------|--------------------------|
+| **DNS Setup** | ❌ Required (hosts file) | ✅ Not needed |
+| **CORS** | ❌ Required (cross-origin) | ✅ Not needed (same origin) |
+| **Frontend Code** | Full URLs: `http://orders.localhost/api/menu` | Relative URLs: `/api/menu` |
+| **Production Mapping** | Easy: subdomain → service | Slightly harder: path routing |
+| **Adding Services** | New subdomain per service | New path prefix per service |
+| **WSL Compatibility** | ❌ Needs Windows hosts file | ✅ Works out of the box |
+| **Complexity** | Higher (DNS + CORS) | Lower (just Traefik config) |
+| **Security** | Better isolation via subdomains | Same origin (less isolation) |
+| **URL Clarity** | `orders.localhost` (very clear) | `localhost/api` (clear enough) |
+| **Scalability** | Excellent (microservices pattern) | Good (monolith with modules) |
+| **Mobile Testing** | Harder (subdomain resolution) | Easier (single domain) |
+
+## When to Use Each Approach
+
+### Use Host-Based Routing When:
+- ✅ Deploying to production with real domains (api.example.com, app.example.com)
+- ✅ Need strong service isolation
+- ✅ Multiple teams manage different services
+- ✅ Services have completely different security requirements
+- ✅ You're okay with DNS configuration
+
+### Use Path-Based Routing When:
+- ✅ Development environment (especially with WSL)
+- ✅ Want simplest possible setup
+- ✅ Services are tightly coupled (frontend + backend)
+- ✅ No DNS configuration possible (restricted environments)
+- ✅ Testing on mobile devices via local network
+- ✅ Prototyping or learning
+
+## Migration Between Approaches
+
+### From Host-Based → Path-Based
+
+**Changes required:**
+1. Update `docker-compose.yml` labels (add PathPrefix, priority)
+2. Update `frontend/index.html` (absolute → relative URLs)
+3. No CORS configuration needed (can remove if present)
+4. No hosts file entries needed (can remove)
+
+**Benefits:**
+- Simpler development workflow
+- No DNS issues
+- Works immediately in WSL
+
+### From Path-Based → Host-Based
+
+**Changes required:**
+1. Update `docker-compose.yml` labels (use Host rules only)
+2. Update `frontend/index.html` (relative → absolute URLs)
+3. Add CORS configuration to API
+4. Configure DNS (hosts file or real DNS)
+
+**Benefits:**
+- Better separation of concerns
+- More production-like
+- Clearer service boundaries
+
+## Testing Path-Based Routing
+
+### 1. Check Traefik Dashboard
+
+Visit: http://localhost:8080
+
+**Look for:**
+- Two HTTP routers:
+  - `orderservice@docker` - Priority: 2, Rule: `Host(\`localhost\`) && PathPrefix(\`/api\`)`
+  - `sws@docker` - Priority: 1, Rule: `Host(\`localhost\`)`
+
+### 2. Test Routes
+
+```bash
+# Frontend (should return HTML)
+curl http://localhost/
+
+# API menu (should return JSON)
+curl http://localhost/api/menu
+
+# API orders (should return JSON array)
+curl http://localhost/api/orders
+
+# Swagger docs (if configured)
+curl http://localhost/openapi/index.html
+```
+
+### 3. Browser Testing
+
+1. Open: http://localhost/
+2. Open browser console (F12)
+3. Network tab should show:
+   - `/ ` → 200 OK (HTML from SWS)
+   - `/api/menu` → 200 OK (JSON from OrderService)
+   - `/api/order/totalled` → 200 OK (JSON from OrderService)
+   - `/api/order/all` → 200 OK (JSON from OrderService)
+4. **No CORS errors** (same origin!)
+
+## Troubleshooting Path-Based Routing
+
+### Issue: API requests return HTML instead of JSON
+
+**Cause:** Traefik is routing to SWS instead of OrderService
+
+**Solution:**
+- Check priority is set correctly (orderservice must be higher)
+- Verify PathPrefix syntax: `PathPrefix(\`/api\`)`
+- Restart Traefik: `docker-compose restart traefik`
+
+### Issue: API requests return 404
+
+**Cause:** OrderService isn't handling the path correctly
+
+**Check:**
+```bash
+# Direct test (bypass Traefik)
+docker-compose exec orderservice wget -O- http://localhost:3000/api/menu
+```
+
+If this works, issue is in Traefik routing.
+If this fails, issue is in OrderService API configuration.
+
+### Issue: Priority doesn't seem to work
+
+**Solution:**
+- Ensure priority values are integers (no quotes)
+- Higher number = higher priority
+- Restart Traefik to apply changes
+- Check Traefik logs: `docker-compose logs traefik`
+
+## Summary
+
+**Current Implementation (Host-Based Routing):**
+- Uses subdomains: `localhost` and `orders.localhost`
+- Requires DNS configuration (hosts file)
+- Frontend uses absolute URLs: `http://orders.localhost/api/menu`
+- Requires CORS configuration
+- More production-like architecture
+
+**Alternative Implementation (Path-Based Routing):**
+- Uses paths: `localhost/` and `localhost/api/*`
+- No DNS configuration needed
+- Frontend uses relative URLs: `/api/menu`
+- No CORS configuration needed
+- Simpler development setup
+
+**Both approaches are valid** - choose based on your requirements:
+- **Learning/Development**: Path-based is simpler
+- **Production/Real-world**: Host-based is more realistic
+
+**Recommendation for WSL users:** Consider using path-based routing to avoid the complexity of managing Windows hosts file entries, especially since WSL IP addresses can change.
+
+````
