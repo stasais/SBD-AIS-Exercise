@@ -130,12 +130,18 @@
                     resultDiv.innerHTML = `
                         <p class="error">❌ DNS Resolution Failed</p>
                         <p>Error: ${error.message}</p>
-                        <p><strong>Fix:</strong> Add to Windows hosts file:</p>
+                        <p><strong>For WSL2 users:</strong> Add to Windows hosts file:</p>
                         <pre>C:\\Windows\\System32\\drivers\\etc\\hosts
 
-Add line:
-127.0.0.1 orders.localhost</pre>
-                        <p>Then flush DNS: <code>ipconfig /flushdns</code></p>
+Add line (replace with your WSL IP):
+172.31.100.169 orders.localhost localhost
+
+Get WSL IP: wsl hostname -I</pre>
+                        <p><strong>For native Linux/Mac:</strong> Add to /etc/hosts:</p>
+                        <pre>127.0.0.1 orders.localhost</pre>
+                        <p>Then flush DNS cache (Windows: <code>ipconfig /flushdns</code>)</p>
+                        <p><strong>Workaround:</strong> Use path-based routing instead:</p>
+                        <p class="info">Try: <a href="http://localhost/api/menu">http://localhost/api/menu</a></p>
                     `;
                 }
             }

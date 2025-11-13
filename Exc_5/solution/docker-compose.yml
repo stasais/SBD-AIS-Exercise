@@ -60,6 +60,8 @@ services:
       - "traefik.http.routers.orderservice-api.priority=200"
       # Specify the port where the service is listening (orderservice uses port 3000)
       - "traefik.http.services.orderservice.loadbalancer.server.port=3000"
+      # IMPORTANT: Tell Traefik to use the 'web' network for routing (not 'intercom')
+      - "traefik.docker.network=web"
     environment:
       - POSTGRES_DB=order
       - POSTGRES_USER=docker
