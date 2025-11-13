@@ -49,17 +49,13 @@ services:
     labels:
       # Enable Traefik routing for this container
       - "traefik.enable=true"
-      # Use BOTH Host-based AND Path-based routing for flexibility
-      # Host-based routing (original)
+      # Define the router name and entry point to use
       - "traefik.http.routers.orderservice.rule=Host(`orders.localhost`)"
       - "traefik.http.routers.orderservice.entrypoints=web"
-      - "traefik.http.routers.orderservice.priority=100"
-      # Path-based routing (fallback for WSL issues) 
-      - "traefik.http.routers.orderservice-api.rule=Host(`localhost`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.orderservice-api.entrypoints=web"
-      - "traefik.http.routers.orderservice-api.priority=200"
       # Specify the port where the service is listening (orderservice uses port 3000)
       - "traefik.http.services.orderservice.loadbalancer.server.port=3000"
+      # IMPORTANT: Tell Traefik to use the 'web' network for routing (not 'intercom')
+      - "traefik.docker.network=web"
     environment:
       - POSTGRES_DB=order
       - POSTGRES_USER=docker
