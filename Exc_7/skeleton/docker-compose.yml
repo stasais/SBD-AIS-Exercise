@@ -1,0 +1,123 @@
+networks:
+  web:
+    name: web
+    driver: overlay
+    attachable: true
+  intercom:
+    name: intercom
+    driver: overlay
+    attachable: true
+
+volumes:
+  order_pg_vol:
+  minio_vol:
+
+secrets:
+  postgres_user:
+    file: docker/postgres_user_secret
+  postgres_password:
+    file: docker/postgres_password_secret
+  s3_user:
+    file: docker/s3_user_secret
+  s3_password:
+    file: docker/s3_password_secret
+
+services:
+  traefik:
+    image: traefik:v3.6.1
+    command:
+      - --api.dashboard=true
+      - --api.insecure=false
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=web
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Traefik reads Swarm API
+    networks:
+      - web
+    deploy:
+      # todo
+      # Replicate only to manager
+      # expose dashboard to localhost/dashboard
+
+
+  frontend:
+    image: ghcr.io/ddibiasi/sbd-ais-exercise/frontend:1.0
+    networks:
+      - web
+    deploy:
+      # todo deploy globally
+      # should be available at http://localhost from every node
+
+
+  orderservice:
+    image: ghcr.io/ddibiasi/sbd-ais-exercise/orderservice:1.0
+    command: [ "/app/ordersystem" ]
+    depends_on:
+      - postgres
+      - minio
+    secrets:
+      # todo use secrets
+    environment:
+      - POSTGRES_DB=order
+      - PGPORT=5555
+      - DB_HOST=postgres
+      - S3_ENDPOINT=minio:8500
+      # todo use secrets
+      - S3_ACCESS_KEY_ID_FILE=
+      - S3_SECRET_ACCESS_KEY_FILE=
+      - POSTGRES_USER_FILE=
+      - POSTGRES_PASSWORD_FILE=
+    networks:
+      - web
+      - intercom
+    deploy:
+      # todo deploy global
+      # Should be reachable at http://orders.localhost
+      # always restart container on failure
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+
+  postgres:
+    image: postgres:18
+    volumes:
+      - order_pg_vol:/var/lib/postgresql
+    networks:
+      - intercom
+    secrets:
+      # todo use secrets
+    environment:
+      - POSTGRES_DB=order
+      - PGPORT=5555
+      # todo use secrets
+      - POSTGRES_USER_FILE=
+      - POSTGRES_PASSWORD_FILE=
+    deploy:
+      # todo replicate only to one worker node
+      # todo use constraints
+
+  minio:
+    image: minio/minio:latest
+    command: [ "server", "--address", ":8500", "/data" ]
+    volumes:
+      - minio_vol:/data
+    secrets:
+      # todo use secrets
+    environment:
+      # todo use secrets
+      - MINIO_ROOT_USER_FILE=
+      - MINIO_ROOT_PASSWORD_FILE=
+    networks:
+      - intercom
+    deploy:
+      # todo replicate only to one worker node
+      # todo use constraints

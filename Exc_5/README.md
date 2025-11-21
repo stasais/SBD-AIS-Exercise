@@ -27,3 +27,9 @@ to expose port 80 and serve the frontend folder.
 
 **Beware to rebuild your Docker image, as the source code has changed!**
 
+On Windows you might need to add the following lines to your `C:\Windows\System32\drivers\etc\hosts` file:
+```
+127.0.0.1 localhost
+127.0.0.1 orders.localhost
+```
+
