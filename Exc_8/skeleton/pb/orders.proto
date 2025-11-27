@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "exc8/pb";
+
+package models;
+
+// Messages
+
+// todo implement messages
+//
+// message MyMessage {
+//  ....
+// }
+
+
+// Generate go files with:
+// Execute `generate_pb.sh`
+
+// Define the service
+service OrderService {
+  // todo define rpc functions
+}
