@@ -1,0 +1,173 @@
+networks:
+  web:
+    name: web
+    driver: overlay
+    attachable: true
+  intercom:
+    name: intercom
+    driver: overlay
+    attachable: true
+
+volumes:
+  order_pg_vol:
+  minio_vol:
+
+secrets:
+  postgres_user:
+    file: docker/postgres_user_secret
+  postgres_password:
+    file: docker/postgres_password_secret
+  s3_user:
+    file: docker/s3_user_secret
+  s3_password:
+    file: docker/s3_password_secret
+
+services:
+  traefik:
+    image: traefik:v3.6.1
+    command:
+      - --api.dashboard=true
+      # - --api.insecure=false  # old
+      - --api.insecure=true  # added: enable dashboard without auth for local dev
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=web
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # Traefik reads Swarm API
+    networks:
+      - web
+    deploy:
+      # todo: Replicate only to manager
+      # todo: expose dashboard to localhost/dashboard
+      replicas: 1  # added: single instance of traefik
+      placement:
+        constraints:
+          - node.role == manager  # added: run only on manager node
+      labels:
+        - traefik.enable=true  # added: enable traefik routing for this service
+        - traefik.http.routers.dashboard.rule=PathPrefix(`/dashboard`) || PathPrefix(`/api`)  # added: route /dashboard and /api to traefik
+        - traefik.http.routers.dashboard.entrypoints=web  # added: use port 80
+        - traefik.http.routers.dashboard.service=api@internal  # added: use internal traefik api
+        - traefik.http.services.dashboard.loadbalancer.server.port=8080  # added: traefik dashboard port
+
+
+  frontend:
+    image: ghcr.io/ddibiasi/sbd-ais-exercise/frontend:1.0
+    networks:
+      - web
+    deploy:
+      # todo: deploy globally
+      # todo: should be available at http://localhost from every node
+      mode: global  # added: deploy to all nodes in swarm
+      labels:
+        - traefik.enable=true  # added: enable traefik routing
+        - traefik.http.routers.frontend.rule=PathPrefix(`/`)  # added: route all paths to frontend
+        - traefik.http.routers.frontend.entrypoints=web  # added: use port 80
+        - traefik.http.routers.frontend.priority=1  # added: lowest priority, fallback route
+        - traefik.http.services.frontend.loadbalancer.server.port=80  # added: frontend listens on port 80
+
+
+  orderservice:
+    image: ghcr.io/ddibiasi/sbd-ais-exercise/orderservice:1.0
+    command: [ "/app/ordersystem" ]
+    depends_on:
+      - postgres
+      - minio
+    secrets:
+      # todo: use secrets
+      - postgres_user  # added: mount secret file
+      - postgres_password  # added: mount secret file
+      - s3_user  # added: mount secret file
+      - s3_password  # added: mount secret file
+    environment:
+      - POSTGRES_DB=order
+      - PGPORT=5555
+      - DB_HOST=postgres
+      - S3_ENDPOINT=minio:8500
+      # todo: use secrets
+      # - S3_ACCESS_KEY_ID_FILE=       # old (empty)
+      # - S3_SECRET_ACCESS_KEY_FILE=   # old (empty)
+      # - POSTGRES_USER_FILE=          # old (empty)
+      # - POSTGRES_PASSWORD_FILE=      # old (empty)
+      - S3_ACCESS_KEY_ID_FILE=/run/secrets/s3_user  # added: path to mounted secret
+      - S3_SECRET_ACCESS_KEY_FILE=/run/secrets/s3_password  # added: path to mounted secret
+      - POSTGRES_USER_FILE=/run/secrets/postgres_user  # added: path to mounted secret
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password  # added: path to mounted secret
+    networks:
+      - web
+      - intercom
+    deploy:
+      # todo: deploy global
+      # todo: Should be reachable at http://orders.localhost
+      # always restart container on failure
+      mode: global  # added: deploy to all nodes in swarm
+      restart_policy:
+        condition: any
+        delay: 5s
+        window: 120s
+      labels:
+        - traefik.enable=true  # added: enable traefik routing
+        - traefik.http.routers.orderservice.rule=Host(`orders.localhost`) || Host(`orders.192.168.1.64.nip.io`)  # added: route by hostname
+        - traefik.http.routers.orderservice.entrypoints=web  # added: use port 80
+        - traefik.http.services.orderservice.loadbalancer.server.port=3000  # fixed: orderservice listens on 3000, not 8080
+        - traefik.docker.network=web  # added: tell traefik which network to use for routing
+
+  postgres:
+    image: postgres:18
+    volumes:
+      - order_pg_vol:/var/lib/postgresql  # keep original path
+    networks:
+      - intercom
+    secrets:
+      # todo: use secrets
+      - postgres_user  # added: mount secret file
+      - postgres_password  # added: mount secret file
+    environment:
+      - POSTGRES_DB=order
+      - PGPORT=5555
+      # todo: use secrets
+      # - POSTGRES_USER_FILE=      # old (empty)
+      # - POSTGRES_PASSWORD_FILE=  # old (empty)
+      - POSTGRES_USER_FILE=/run/secrets/postgres_user  # added: path to mounted secret
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password  # added: path to mounted secret
+    deploy:
+      # todo: replicate only to one worker node
+      # todo: use constraints
+      replicas: 1  # added: single database instance
+      placement:
+        constraints:
+          # - node.hostname == docker-desktop  # old: pin to worker node (Mac)
+          - node.role == manager  # added: pin to manager (Linux) - Mac has arch issues
+
+  minio:
+    image: minio/minio:latest
+    command: [ "server", "--address", ":8500", "/data" ]
+    volumes:
+      - minio_vol:/data
+    secrets:
+      # todo: use secrets
+      - s3_user  # added: mount secret file
+      - s3_password  # added: mount secret file
+    environment:
+      # todo: use secrets
+      # - MINIO_ROOT_USER_FILE=      # old (empty)
+      # - MINIO_ROOT_PASSWORD_FILE=  # old (empty)
+      - MINIO_ROOT_USER_FILE=/run/secrets/s3_user  # added: path to mounted secret
+      - MINIO_ROOT_PASSWORD_FILE=/run/secrets/s3_password  # added: path to mounted secret
+    networks:
+      - intercom
+    deploy:
+      # todo: replicate only to one worker node
+      # todo: use constraints
+      replicas: 1  # added: single minio instance
+      placement:
+        constraints:
+          # - node.hostname == docker-desktop  # old: pin to worker node (Mac)
+          - node.role == manager  # added: pin to manager (Linux) - Mac has arch issues
