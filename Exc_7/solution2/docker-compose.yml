@@ -52,14 +52,15 @@ services:
           - node.role == manager  # added: run only on manager node
       labels:
         - traefik.enable=true  # added: enable traefik routing for this service
-        - traefik.http.routers.dashboard.rule=PathPrefix(`/dashboard`) || PathPrefix(`/api`)  # added: route /dashboard and /api to traefik
+        - traefik.http.routers.dashboard.rule=PathPrefix(`/dashboard`)  # added: route /dashboard to traefik (removed /api conflict)
         - traefik.http.routers.dashboard.entrypoints=web  # added: use port 80
         - traefik.http.routers.dashboard.service=api@internal  # added: use internal traefik api
         - traefik.http.services.dashboard.loadbalancer.server.port=8080  # added: traefik dashboard port
 
 
   frontend:
-    image: ghcr.io/ddibiasi/sbd-ais-exercise/frontend:1.0
+    # image: ghcr.io/ddibiasi/sbd-ais-exercise/frontend:1.0  # old: uses orders.localhost
+    image: sbd-frontend:local  # added: local build with orders.local
     networks:
       - web
     deploy:
@@ -107,15 +108,19 @@ services:
       # todo: deploy global
       # todo: Should be reachable at http://orders.localhost
       # always restart container on failure
-      mode: global  # added: deploy to all nodes in swarm
+      replicas: 1  # changed: amd64 image can't run on arm64 Mac
+      placement:
+        constraints:
+          - node.role == manager  # pin to Linux manager (amd64)
       restart_policy:
         condition: any
         delay: 5s
         window: 120s
       labels:
         - traefik.enable=true  # added: enable traefik routing
-        - traefik.http.routers.orderservice.rule=Host(`orders.localhost`) || Host(`orders.192.168.1.64.nip.io`) || Host(`orders.100.67.76.54.nip.io`) || Host(`orders.local`)  # added: route by hostname (includes Tailscale nip.io)
+        - traefik.http.routers.orderservice.rule=PathPrefix(`/api`)  # added: route /api/* to orderservice
         - traefik.http.routers.orderservice.entrypoints=web  # added: use port 80
+        - traefik.http.routers.orderservice.priority=10  # added: higher priority than frontend
         - traefik.http.services.orderservice.loadbalancer.server.port=3000  # fixed: orderservice listens on 3000, not 8080
         - traefik.docker.network=web  # added: tell traefik which network to use for routing
 
@@ -143,8 +148,7 @@ services:
       replicas: 1  # added: single database instance
       placement:
         constraints:
-          # - node.hostname == docker-desktop  # old: pin to worker node (Mac)
-          - node.role == manager  # added: pin to manager (Linux) - Mac has arch issues
+          - node.role == manager  # pin to manager
 
   minio:
     image: minio/minio:latest
@@ -169,5 +173,4 @@ services:
       replicas: 1  # added: single minio instance
       placement:
         constraints:
-          # - node.hostname == docker-desktop  # old: pin to worker node (Mac)
-          - node.role == manager  # added: pin to manager (Linux) - Mac has arch issues
+          - node.role == manager  # pin to manager
