@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "exc8/pb";
+
+package models;
+
+// Messages
+
+// todo implement messages
+//
+// message MyMessage {
+//  ....
+// }
+
+// ============================================================================
+// DRINK MESSAGE DEFINITION
+// Represents a drink item that can be ordered
+// ============================================================================
+// Message to represent a single drink with its properties
+message Drink {
+  // Unique identifier for the drink
+  int32 id = 1;
+  // Name of the drink (e.g., "Spritzer", "Beer", "Coffee")
+  string name = 2;
+  // Price of the drink in currency units
+  int32 price = 3;
+  // Description of the drink
+  string description = 4;
+}
+
+// ============================================================================
+// DRINKS LIST MESSAGE
+// Container for returning multiple drinks from GetDrinks RPC
+// ============================================================================
+// Message to hold a list of drinks returned by GetDrinks
+message DrinkList {
+  // Array of Drink messages
+  repeated Drink drinks = 1;
+}
+
+// ============================================================================
+// ORDER REQUEST MESSAGE
+// Request message for ordering drinks
+// ============================================================================
+// Message sent by client to order a specific drink
+message OrderRequest {
+  // ID of the drink to order
+  int32 drink_id = 1;
+  // Quantity of drinks to order
+  int32 quantity = 2;
+}
+
+// ============================================================================
+// ORDER ITEM MESSAGE
+// Represents an individual order item with drink details and quantity
+// ============================================================================
+// Message representing a single order item in the order list
+message OrderItem {
+  // The drink that was ordered
+  Drink drink = 1;
+  // Total quantity ordered of this drink
+  int32 quantity = 2;
+}
+
+// ============================================================================
+// ORDER LIST MESSAGE
+// Container for returning all orders from GetOrders RPC
+// ============================================================================
+// Message to hold the complete list of orders
+message OrderList {
+  // Array of OrderItem messages representing all orders
+  repeated OrderItem orders = 1;
+}
+
+
+// Generate go files with:
+// Execute `generate_pb.sh`
+
+// Define the service
+service OrderService {
+  // todo define rpc functions
+  // ============================================================================
+  // ORDER SERVICE RPC DEFINITIONS
+  // Defines the gRPC service interface for the order system
+  // ============================================================================
+  
+  // RPC to get list of available drinks
+  // Takes empty request, returns list of all available drinks
+  rpc GetDrinks(google.protobuf.Empty) returns (DrinkList);
+  
+  // RPC to place an order for a drink
+  // Takes OrderRequest with drink_id and quantity, returns boolean success
+  rpc OrderDrink(OrderRequest) returns (google.protobuf.BoolValue);
+  
+  // RPC to get all current orders (the bill)
+  // Takes empty request, returns list of all order items
+  rpc GetOrders(google.protobuf.Empty) returns (OrderList);
+}
